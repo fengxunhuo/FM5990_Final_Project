@@ -1,0 +1,337 @@
+---
+title: "Fast and Furious IX: Strangle Race"
+author: "Renchang Lu, Weiliang Huang, Yilin Zhu"
+date: November 20, 2018
+output: 
+  html_document:
+    theme: cerulean
+    highlight: tango
+    df_print: paged
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, load_packages, include = FALSE}
+# loading packages
+library(tidyverse)
+library(tseries)
+```
+
+```{r, read_data, include = FALSE}
+# reading in data
+df_underlying_all <- 
+    read_csv("project_underlying.csv")
+df_pnl <- 
+    read_csv("project_strangle_pnl.csv") 
+df_position_size_all <- 
+    read_csv("project_position_scaling.csv")
+
+```
+
+```{r, selecting_underlyings, include = FALSE}
+# chose 20 underlyings with high liquidity
+df_underlying <-
+    df_underlying_all %>%
+    top_n(20, avg_daily_volume)
+
+```
+
+
+```{r, filtering_data, include = FALSE}
+# check variation of df_position_size_all and df_strangle_all
+distinct(df_position_size_all, variation)
+distinct(df_pnl, variation)
+
+# position size
+df_position_size <- 
+    df_position_size_all %>% 
+    filter(underlying %in% df_underlying$underlying)
+
+    
+# pnls of all options
+df_pnl <-
+  df_pnl %>%
+  mutate(daily_opt = dly_opt_pnl * strangle_unity_mult
+    , daily_dh = dly_dh_pnl * strangle_unity_mult)
+
+```
+
+
+&nbsp;
+
+<font size=3>
+The purpose of this analysis is to compare short-strangle strategies of different deltas(variations). We tested the strategy of selling strangles and holding them until expiration. A strangle is a put combined with a call, both with the almost same delta.
+</font> 
+
+
+&nbsp;
+
+#### **Three Trading Strategies**
+
+<font size=3>
+In this analysis, We compare Three different trading strategies:
+
+1. Short **10-delta** strangles. 
+
+2. Short **30-delta** strangles.
+
+3. Short **50-delta** strangles.
+
+
+In all strategies, options are sold approximately one month before expiration. All options are regular expiration options; trades take place on the prior regular expiration. The backtest includes **19** consecutive expirations, starting from *`r min(df_pnl$expiration)`*, and ending on *`r max(df_pnl$expiration)`* - the first trades open on *`r min(df_pnl$trade_date)`* and the last trades close on *`r max(df_pnl$trade_date)`*.
+
+**20** different ETFs are included, which have highest liquidity. In particular, the symbols are: 
+</font> 
+
+```{r, printing_underlyings, echo = FALSE}
+df_underlying
+```
+
+
+&nbsp;
+
+#### **Performance**
+<font size=3>
+In this section, we compared the performance of the strategies with 3 different deltas. Here is a table of some key performance metrics:
+<font size=3>
+
+```{r, calc_performance, include = FALSE}
+# daily and ttd pnl for each strategy, all underlyings combined
+df_strangle_pnl <-
+    df_pnl %>%
+    filter(underlying %in% df_underlying$underlying) %>%
+    group_by(variation, trade_date) %>%
+    summarize(daily_opt = sum(daily_opt)
+    , daily_dh = sum(daily_opt) + sum(daily_dh)) %>%
+    mutate(ttd_opt = cumsum(daily_opt)
+    , ttd_dh = cumsum(daily_dh))
+
+# Three stangles performance
+df_str_pf <-
+    df_strangle_pnl %>%
+    group_by(variation) %>%
+    summarize(tot_unhedged = round(sum(daily_opt), 2)
+    , tot_hedged = round(sum(daily_dh), 2)
+    , avg_unhedged = round(mean(daily_opt), 2)
+    , avg_hedged = round(mean(daily_dh), 2)
+    , sd_unhedged = round(sd(daily_opt), 2)
+    , sd_hedged = round(sd(daily_dh), 2)
+    , sr_unhedged = (mean(daily_opt) / sd(daily_opt)) * sqrt(252) %>% round(2)
+    , sr_hedged = (mean(daily_dh) / sd(daily_dh)) * sqrt(252)  %>% round(2)
+    , dvar_unhedged = quantile(daily_opt, 0.05) %>% round(2)
+    , dvar_hedged = quantile(daily_dh, 0.05) %>% round(2)
+    , MDD_unhedged = (maxdrawdown(daily_opt))[1] %>% as.numeric() %>% round(2)
+    , MDD_hedged = (maxdrawdown(daily_dh))[1] %>% as.numeric() %>% round(2))
+
+# modify colnames
+colnames(df_str_pf)[1] = "strategy"
+
+
+# The maximum profit of each variation
+df_max_profit <-
+    df_position_size %>%
+    group_by(variation) %>%
+    summarize(max_profit = sum(strangle_prem_sold))
+    
+
+
+# create a tibble to show the result
+df_performance <-
+    tibble(
+        strategy = c("10-delta_unhedged", "10-delta_hedged", 
+                     "30-delta_unhedged", "30-delta_hedged",
+                     "50-delta_unhedged", "50-delta_hedged")
+        , total_pnl = c(df_str_pf$tot_unhedged[1], df_str_pf$tot_hedged[1],
+                        df_str_pf$tot_unhedged[2], df_str_pf$tot_hedged[2],
+                        df_str_pf$tot_unhedged[3], df_str_pf$tot_hedged[3])
+        , max_profit = c(df_max_profit$max_profit[1], df_max_profit$max_profit[1],
+                         df_max_profit$max_profit[2], df_max_profit$max_profit[2],
+                         df_max_profit$max_profit[3], df_max_profit$max_profit[3])
+        , mean = c(df_str_pf$avg_unhedged[1], df_str_pf$avg_hedged[1],
+                   df_str_pf$avg_unhedged[2], df_str_pf$avg_hedged[2],
+                   df_str_pf$avg_unhedged[3], df_str_pf$avg_hedged[3])
+        , sd = c(df_str_pf$sd_unhedged[1], df_str_pf$sd_hedged[1],
+                 df_str_pf$sd_unhedged[2], df_str_pf$sd_hedged[2],
+                 df_str_pf$sd_unhedged[3], df_str_pf$sd_hedged[3])
+        , sharpe = c(df_str_pf$sr_unhedged[1], df_str_pf$sr_hedged[1],
+                     df_str_pf$sr_unhedged[2], df_str_pf$sr_hedged[2],
+                     df_str_pf$sr_unhedged[3], df_str_pf$sr_hedged[3])
+        , dvar = c(df_str_pf$dvar_unhedged[1], df_str_pf$dvar_hedged[1],
+                   df_str_pf$dvar_unhedged[2], df_str_pf$dvar_hedged[2],
+                   df_str_pf$dvar_unhedged[3], df_str_pf$dvar_hedged[3])
+        , MDD = c(df_str_pf$MDD_unhedged[1], df_str_pf$MDD_hedged[1],
+                  df_str_pf$MDD_unhedged[2], df_str_pf$MDD_hedged[2],
+                  df_str_pf$MDD_unhedged[3], df_str_pf$MDD_hedged[3])
+    )
+```
+ 
+
+
+```{r, performance_table, echo = FALSE}
+df_str_pf
+```
+
+<font size=3>
+As you can see, considering **sharpe ratio**, performance of **30-delta** is best among the strategies since it has biggest sharpe ratio `r df_performance %>% filter(strategy == "30-delta_unhedged") %>% .$sharpe`. On the other hand, considering **total pnl**, performance of **10-delta** is the best and total pnl is `r df_performance %>% filter(strategy == "30-delta_unhedged") %>% .$total_pnl`. However, considering **maximum drawdown** , **50-delta** with maximum drawdown `r df_performance %>% filter(strategy == "50-delta_unhedged") %>% .$MDD` has the best performance.
+
+What's more, it is obvious that **selling naked options were outperformed by selling delta-hedged options**. Although total and average pnl of delta-hedged options are smaller than the naked options, delta-hedged options are more stable because of smaller standard variation of pnl, dvar and MDD.
+</font>
+
+
+&nbsp;
+
+<font size=3>
+The performance of these strategies are not so good, so we tried to find the reason. We seperated strangles into call part and put part and calculated the performance of each part. Here are two tables of some key performance metrics:
+</font>
+
+```{r, df_call and df_put, echo = FALSE}
+## only selling call
+df_call_pnl <-
+    df_pnl %>% 
+    filter(underlying %in% df_underlying$underlying, 
+           type == "call") %>%
+    group_by(variation, trade_date) %>%
+    summarize(daily_opt = sum(daily_opt)) %>%
+    group_by(variation) %>%
+    summarize(tot_pnl = round(sum(daily_opt), 2)
+    , avg_pnl = round(mean(daily_opt), 2)
+    , sd_pnl = round(sd(daily_opt), 2)
+    , sr_pnl = (mean(daily_opt) / sd(daily_opt)) * sqrt(252) %>% round(2)
+    , dvar_pnl = quantile(daily_opt, 0.05) %>% round(2)
+    , MDD_pnl = (maxdrawdown(daily_opt))[1] %>% as.numeric() %>% round(2))
+
+## only selling put
+df_put_pnl <-
+    df_pnl %>% 
+    filter(underlying %in% df_underlying$underlying, 
+           type == "put") %>%
+    group_by(variation, trade_date) %>%
+    summarize(daily_opt = sum(daily_opt)) %>%
+    group_by(variation) %>%
+    summarize(tot_pnl = round(sum(daily_opt), 2)
+    , avg_pnl = round(mean(daily_opt), 2)
+    , sd_pnl = round(sd(daily_opt), 2)
+    , sr_pnl = (mean(daily_opt) / sd(daily_opt)) * sqrt(252) %>% round(2)
+    , dvar_pnl = quantile(daily_opt, 0.05) %>% round(2)
+    , MDD_pnl = (maxdrawdown(daily_opt))[1] %>% as.numeric() %>% round(2))
+
+```
+
+```{r, df_call_pnl and df_put_pnl table, echo = FALSE}
+df_call_pnl
+
+df_put_pnl
+```
+
+<font size=3>
+The upper table is the performance of selling the call option, while the lower one is the performance of selling the put option. It is easy to find out that selling the call option is worse than selling the put option. This is because total pnl, average pnl and sharp ratio are all negative when selling the call, and then positive after selling the put. However, maximum drawdown is much smaller for the call than selling the put.
+</font>
+
+
+&nbsp;
+
+#### **Visualizing Cumulative Performance**
+
+<font size=3>
+In this part, we draw the three cumulative (ttd) PNLs (without hedging) in one graph:
+</font>
+
+```{r, ttd_pnl_graph, echo = FALSE, fig.align='center'}
+# compare the pnl of three strategies
+df_strangle_pnl %>%
+    ggplot() +
+    geom_line(aes(
+    x = trade_date,
+    y = ttd_opt,
+    color = factor(variation)
+    )) +
+    scale_color_discrete(name  = "Strategy") +
+    labs(title = "TTD_Opt for Each Variation"
+    , x = "Trade_date"
+    , y = "TTD_PNL") +
+    theme(plot.title = element_text(hjust = 0.5)) 
+
+```
+
+<font size=3>
+The graph shows that the three strategies are great, especially 10-delta...until they aren't.
+
+As we can see from the graph above, the **10-delta** strangle has the best total pnls, but worst MDD, which is also verified by the table above.
+
+The reason why the 10-delta performed like that is that the total scale of the strangle is `r df_pnl %>% filter(underlying %in% df_underlying$underlying) %>% group_by(variation) %>% summarize(ttd_unity = sum(strangle_unity_mult)) %>% filter(variation == 0.1) %>% .$ttd_unity %>% round(0) %>% as.character()` which is much bigger than that of the 30-delta one: `r df_pnl %>% filter(underlying %in% df_underlying$underlying) %>% group_by(variation) %>% summarize(ttd_unity = sum(strangle_unity_mult)) %>% filter(variation == 0.3) %>% .$ttd_unity %>% round(0) %>% as.character()` and 50-delta:`r df_pnl %>% filter(underlying %in% df_underlying$underlying) %>% group_by(variation) %>% summarize(ttd_unity = sum(strangle_unity_mult)) %>% filter(variation == 0.5) %>% .$ttd_unity %>% round(0) %>% as.character()`
+</font>
+
+&nbsp;
+
+#### **Hedged and Unhedged Strategies**
+
+<font size=3>
+As we can see from the table above, delta-hedging reduces the risk significantly, but the risk is not zero. Draw graph of the cumulative PNLs of the hedged and unhedged strategies to illustrate this risk reduction:
+</font>
+
+```{r, ttd_pnl, echo = FALSE, fig.align='center'}
+# compare pnl of the hedged and unhedged 
+df_strangle_pnl %>% 
+    ggplot() +
+    geom_line(aes(x = trade_date, y = ttd_opt), color = "red", show.legend = TRUE) +
+    geom_line(aes(x = trade_date, y = ttd_dh), color = "blue", show.legend = TRUE) +
+    facet_wrap(~variation) +
+    labs(title = "TTD_PNL for Hedged and Unhedged Strategies"
+    , x = "Trade_date"
+    , y = "TTD_PNL") +
+    theme(plot.title = element_text(hjust = 0.5)) 
+
+
+```
+
+<font size=3>
+According the graph, it is obvious that **selling naked options were outperformed by selling delta-hedged options**.
+</font>
+
+
+&nbsp;
+
+#### **Choosing 20 least liquid underlyings**
+
+
+
+<font size=3>
+We chose the 20 underlyings with highest liquidity above, now we try to see what will happen for the top 20 in **low liquidity**. Here is a table of some key performance metrics:
+</font>
+
+```{r, pnl of low liquidity underlyings, echo = FALSE}
+
+## choose 20 underlyings with low liquidity
+df_low_underlying <-
+    df_underlying_all %>% 
+    top_n(-20, avg_daily_volume)
+
+## calculate the performance of these underlyings
+df_low_pf <- 
+    df_pnl %>%
+    filter(underlying %in% df_low_underlying$underlying) %>%
+    group_by(variation, trade_date) %>%
+    summarize(daily_opt = sum(daily_opt)) %>%
+    group_by(variation) %>%
+    summarize(
+    tot_pnl = round(sum(daily_opt), 2),
+    avg_pnl = round(mean(daily_opt), 2),
+    sd_pnl = round(sd(daily_opt), 2),
+    sr_pnl = (mean(daily_opt) / sd(daily_opt)) * sqrt(252) %>% round(2),
+    dvar_pnl = quantile(daily_opt, 0.05) %>% round(2),
+    MDD_pnl = (maxdrawdown(daily_opt))[1] %>% as.numeric() %>% round(2)
+    )
+```
+
+
+```{r, table of low liquidity pnl, echo = FALSE}
+df_low_pf
+```
+
+<font size=3>
+From the table above we can see that performance of **30-delta** is best among the strategies because it has the biggest total pnl `r (df_low_pf$tot_pnl)[2] %>% round(2)` and sharp ratio `r (df_low_pf$sr_pnl)[2] %>% round(2)`. However, as far as maximum drawdown is concerned, all of them perform badly, especially the **10-delta** with a maximum drawdown of `r df_low_pf %>% filter(variation == 0.1) %>% .$MDD_pnl %>% round(2)`
+</font>
